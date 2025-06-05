@@ -1,6 +1,8 @@
 logs/*
 !logs/.gitkeep
 
+data/*
+!data/.gitkeep
 
 ### venv template
 # Virtualenv
