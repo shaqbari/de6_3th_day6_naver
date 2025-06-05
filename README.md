@@ -1,13 +1,22 @@
 # de6_3th_day6_naver
 데이터엔지니어링 6기 세번째 프로젝트 6팀 DAY6
 
-### .env파일 설정
+## .env파일 설정
 ```dotenv
 NAVER_API_CLIENT_ID=your_id
 NAVER_API_CLIENT_SECRET=your_secret
 ```
 
-### docker 
+### airflow에서 .env파일에서 설정한 값 가져오기
+```python
+from airflow.models import Variable
+
+client_id = Variable.get('NAVER_API_CLIENT_ID')
+client_secret = Variable.get('NAVER_API_CLIENT_SECRET')
+```
+
+
+## docker 
 ```shell
 docker compose up
 ```
