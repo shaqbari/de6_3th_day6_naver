@@ -9,6 +9,7 @@ from pytz import timezone
 from airflow import DAG
 from airflow.decorators import task
 from airflow.hooks.postgres_hook import PostgresHook
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 
 # DAG 기본 설정
 default_args = {
@@ -151,6 +152,7 @@ def load_via_sqlalchemy(**kwargs):
     print(f"총 {result['count'].iloc[0]}개 레코드가 저장되었습니다.")
 
 # DAG 정의
+
 with DAG(
     dag_id='naver_shopping_to_postgres_split',
     default_args=default_args,
@@ -159,4 +161,16 @@ with DAG(
     tags=['naver', 'postgres'],
 ) as dag:
 
+    # 1. 데이터 수집 및 저장
     run_task = load_via_sqlalchemy()
+
+    # 2. anomaly_detection DAG 실행 트리거
+    trigger_anomaly_detection = TriggerDagRunOperator(
+        task_id='trigger_anomaly_detection',
+        trigger_dag_id='anomaly_detection',  # 실행할 대상 DAG ID
+        wait_for_completion=False,           # True로 하면 동기 실행됨
+        reset_dag_run=True,                  # 기존 실행 중인 DAG 중복 방지
+        conf={"source": "naver"},            # 필요시 전달할 파라미터
+    )
+
+    run_task >> trigger_anomaly_detection
