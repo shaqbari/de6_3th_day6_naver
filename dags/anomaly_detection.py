@@ -8,53 +8,74 @@ default_args = {
     'owner': 'airflow',
     'start_date': datetime(2025, 6, 5),
     'retries': 1,
-    'retry_delay': timedelta(minutes=3),
+    'retry_delay': timedelta(minutes=2),
 }
 
+@task
+def detect_and_save_summary():
+    # PostgreSQL 연결
+    hook = PostgresHook(postgres_conn_id='postgres_naver_conn')
+    engine = hook.get_sqlalchemy_engine()
+
+    # 전체 데이터 로딩
+    df = pd.read_sql("SELECT * FROM naver_shopping", con=engine)
+
+    # datetime 처리
+    df['dt'] = pd.to_datetime(df['dt'])
+    df['hour'] = df['dt'].dt.floor('h')
+
+    # 전체 키워드 대상 (10개 모두)
+    df_filtered = df[df['keyword'].notnull()]
+
+    # 요약 집계
+    result = df_filtered.groupby(['hour', 'keyword'])['lprice'].agg(
+        avg_price='mean',
+        min_price='min',
+        max_price='max'
+    ).reset_index()
+
+    # 평균 정수화 및 id 생성
+    result['avg_price'] = result['avg_price'].astype(int)
+    result['id'] = result['hour'].astype(str)
+
+    # 컬럼 순서 정리
+    result = result[['id', 'keyword', 'avg_price', 'min_price', 'max_price']]
+
+    # 테이블 생성 (최초 1회만 작동)
+    with engine.connect() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS summary_shop_keyword (
+                id text PRIMARY KEY,
+                keyword text,
+                avg_price bigint,
+                min_price bigint,
+                max_price bigint
+            );
+        """)
+
+    # 기존 중복 제거 후 insert
+    with engine.connect() as conn:
+        trans = conn.begin()
+        try:
+            if not result.empty:
+                result_ids = tuple(result['id'].tolist())
+                if len(result_ids) == 1:
+                    conn.execute(f"DELETE FROM summary_shop_keyword WHERE id = '{result_ids[0]}';")
+                else:
+                    conn.execute(f"DELETE FROM summary_shop_keyword WHERE id IN {result_ids};")
+
+                result.to_sql('summary_shop_keyword', con=engine, if_exists='append', index=False)
+            trans.commit()
+        except Exception as e:
+            trans.rollback()
+            raise
+
 with DAG(
-    dag_id='anomaly_detection',
+    dag_id='anomaly_detection_summary',
     default_args=default_args,
-    schedule_interval=None,  # Trigger로만 실행됨
+    schedule_interval=None,  # trigger로 실행
     catchup=False,
-    tags=['anomaly', 'naver'],
+    tags=['naver', 'anomaly'],
 ) as dag:
 
-    @task
-    def detect_and_save():
-        # DB 연결
-        hook = PostgresHook(postgres_conn_id='postgres_naver_conn')
-        engine = hook.get_sqlalchemy_engine()
-
-        # 1. 전체 데이터 로드
-        df = pd.read_sql("SELECT * FROM naver_shopping", con=engine)
-
-        # 2. datetime 처리
-        df['dt'] = pd.to_datetime(df['dt'])
-        df['hour'] = df['dt'].dt.floor('h')
-
-        # 3. 사용할 키워드 목록
-        keywords = ['에어컨', '제습기', '선풍기', '서큘레이터', '아이스박스',
-                    '가습기', '히터', '보온병', '온풍기', '전기매트']
-
-        df_filtered = df[df['keyword'].isin(keywords)]
-
-        # 4. 그룹화 및 가격 통계
-        result = df_filtered.groupby(['hour', 'keyword'])['lprice'].agg(
-            avg_price='mean',
-            min_price='min',
-            max_price='max'
-        ).reset_index()
-
-        result['avg_price'] = result['avg_price'].astype(int)
-        result = result[['hour', 'keyword', 'avg_price', 'min_price', 'max_price']]
-
-        # 5. id 컬럼 생성 (hour + keyword 기반)
-        result['id'] = result['hour'].astype(str) + '_' + result['keyword']
-        result = result[['id', 'keyword', 'avg_price', 'min_price', 'max_price']]
-
-        print(result.head())
-
-        # 6. 저장 (예: 테이블로 저장)
-        result.to_sql('naver_anomaly_summary', con=engine, if_exists='replace', index=False)
-
-    detect_and_save()
+    detect_and_save_summary()
