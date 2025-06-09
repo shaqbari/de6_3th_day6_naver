@@ -107,8 +107,6 @@ def load_via_sqlalchemy(**kwargs):
     df = df[col_names]
     print(df.info())
 
-    # 반복문으로 추가로 다른 키워드를 api로조회
-    # 컬럼 추가 및 전처리
 
     engine = create_engine(Variable.get('POSTGRE_NAVER_CONN'))
     with engine.connect() as conn:
