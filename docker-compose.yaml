@@ -276,7 +276,7 @@ services:
       _AIRFLOW_WWW_USER_CREATE: "true"
       _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
       _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
-      _PIP_ADDITIONAL_REQUIREMENTS: ""
+      _PIP_ADDITIONAL_REQUIREMENTS: "dbt-postgres yfinance pandas numpy oauth2client gspread requests pytz"
     user: "0:0"
     volumes:
       - ${AIRFLOW_PROJ_DIR:-.}:/sources

@@ -4,6 +4,7 @@ from airflow import DAG
 from airflow.decorators import task
 from airflow.hooks.postgres_hook import PostgresHook
 from sqlalchemy.sql import text
+import os
 
 default_args = {
     'owner': 'airflow',
@@ -11,6 +12,12 @@ default_args = {
     'retries': 1,
     'retry_delay': timedelta(minutes=2),
 }
+
+BASE_SQL_PATH = r'D:\docker\de6_3th_day6_naver\naver_project\models\marts'
+
+def load_sql(filename: str) -> str:
+    with open(os.path.join(BASE_SQL_PATH, filename), 'r', encoding='utf-8') as file:
+        return file.read()
 
 @task
 def detect_and_save_summary():
@@ -20,7 +27,6 @@ def detect_and_save_summary():
     df = pd.read_sql("SELECT * FROM naver_shopping", con=engine)
     df['dt'] = pd.to_datetime(df['dt'])
     df['hour'] = df['dt'].dt.floor('h')
-
     df_filtered = df[df['keyword'].notnull()]
 
     result = df_filtered.groupby(['hour', 'keyword'])['lprice'].agg(
@@ -34,39 +40,12 @@ def detect_and_save_summary():
     result = result[['id', 'keyword', 'avg_price', 'min_price', 'max_price']]
 
     with engine.begin() as conn:
-        # 1) 테이블 생성 (복합 PK)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS summary_shop_keyword (
-                id text NOT NULL,
-                keyword text NOT NULL,
-                avg_price bigint,
-                min_price bigint,
-                max_price bigint,
-                PRIMARY KEY (id, keyword)
-            );
-        """)
+        # 테이블 생성
+        table_sql = load_sql('summary_shop_keyword.sql')
+        conn.execute(text(table_sql))
 
-        # 2) 뷰 생성 (기존에 존재하면 교체)
-        conn.execute("""
-            CREATE OR REPLACE VIEW anomaly AS
-            SELECT 
-                curr.id,
-                curr.keyword,
-                curr.avg_price,
-                curr.min_price,
-                curr.max_price,
-                CASE 
-                    WHEN prev.avg_price IS NULL THEN 0
-                    WHEN ABS(curr.avg_price - prev.avg_price) / NULLIF(prev.avg_price, 0) >= 0.1 THEN 1
-                    ELSE 0
-                END AS anomal
-            FROM summary_shop_keyword curr
-            LEFT JOIN summary_shop_keyword prev
-                ON curr.keyword = prev.keyword
-                AND prev.id = TO_CHAR(TO_TIMESTAMP(curr.id, 'YYYY-MM-DD HH24:MI:SS') - INTERVAL '1 hour', 'YYYY-MM-DD HH24:MI:SS')
-        """)
+        # 데이터 삽입
         if not result.empty:
-            # 3) 중복 삭제 후 삽입
             keys_to_delete = result[['id', 'keyword']].drop_duplicates()
             tuple_strs = ", ".join(
                 f"('{row['id']}', '{row['keyword']}')" for _, row in keys_to_delete.iterrows()
@@ -76,8 +55,11 @@ def detect_and_save_summary():
                 WHERE (id, keyword) IN ({tuple_strs})
             """
             conn.execute(text(delete_sql))
-
             result.to_sql('summary_shop_keyword', con=conn, if_exists='append', index=False)
+
+        # 뷰 생성
+        view_sql = load_sql('anomaly.sql')
+        conn.execute(text(view_sql))
 
 with DAG(
     dag_id='anomaly_detection',
