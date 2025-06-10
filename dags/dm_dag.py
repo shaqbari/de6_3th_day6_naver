@@ -214,6 +214,7 @@ def alert_slack_task(**kwargs):
 ────────────────────────────────────────────────────────────────────────
 """
         send_slack_message(msg)
+=======
 
 with DAG(
     dag_id='dm_dag',
@@ -249,6 +250,7 @@ with DAG(
         task_id='insert_dm_data',
         python_callable=insert_dm_data,
     )
+
 
     t5 = PythonOperator(
         task_id='send_slack_alert',
