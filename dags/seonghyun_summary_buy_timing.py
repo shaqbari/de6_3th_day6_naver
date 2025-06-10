@@ -8,6 +8,7 @@ import requests
 import pandas as pd
 import json
 import logging
+import time
 
 default_args = {
     'owner': 'airflow',
@@ -16,29 +17,21 @@ default_args = {
     'retry_delay': timedelta(minutes=3)
 }
 
+def send_slack_message(message: str):
+    SLACK_URL = Variable.get("SLACK_WEBHOOK_URL")
+    requests.post(SLACK_URL, json={"text": message})
+
 
 @task
 def make_naver_price_summary(**kwargs):
     engine = create_engine(Variable.get('POSTGRE_NAVER_CONN'))
     df_naver_price = pd.read_sql("select * from naver_price", con=engine)
 
-    # 1. 시간 순 정렬 (상품 단위)
     df_sorted = df_naver_price.sort_values(by=['product_id', 'dt'])
-
-    # 2. 전 시간대 가격 추가
     df_sorted['prev_lprice'] = df_sorted.groupby('product_id')['lprice'].shift(1)
-
-    # 3. 변화율 계산 ((현재 - 이전) / 이전)
     df_sorted['price_change_rate'] = (df_sorted['lprice'] - df_sorted['prev_lprice']) / df_sorted['prev_lprice']
-
-    # 4. 변화율(%) 보기 쉽게 포맷팅 (선택사항)
     df_sorted['price_change_rate_pct'] = df_sorted['price_change_rate'] * 100
-
-    # 5. 필요시 NaN 제거 (첫 행은 이전 값이 없으므로)
     df_result = df_sorted.dropna(subset=['price_change_rate'])
-
-    # 결과 확인
-    print(df_result[['product_id', 'dt', 'lprice', 'prev_lprice', 'price_change_rate_pct']])
 
     # product_id 별 분석 시작
     # 1. 최근 24시간 가격 데이터 준비
@@ -77,9 +70,9 @@ def make_naver_price_summary(**kwargs):
         price_diff = (last_price - first_price)
         price_diff_pct = price_diff / first_price * 100
 
-        # 조건: 현재가가 MA12보다 낮고, 최저가에 근접 (5% 이내), price_diff_pct -10이하
+        # 조건: 현재가가 MA12보다 낮고, 최저가에 근접 (5% 이내), price_diff_pct -5이하
         if not pd.isna(
-                current_ma12) and last_price < current_ma12 and last_price <= min_price * 1.05 and price_diff_pct <= -10:
+                current_ma12) and last_price < current_ma12 and last_price <= min_price * 1.05 and price_diff_pct <= -5:
             buy_signals.append({
                 'product_id': product_id,
                 'dt': current_time,
@@ -91,6 +84,15 @@ def make_naver_price_summary(**kwargs):
                 'price_diff': price_diff,
                 'price_diff_pct': price_diff_pct,
             })
+
+    if len(buy_signals) == 0:
+        logging.warning("구매타이밍의 제품이 없거나 데이터가 12시간이상 수집되지 않음")
+        with engine.connect() as conn:
+            trans = conn.begin()  # 트랜잭션 시작
+            conn.execute("DELETE FROM summary_buy_timing")
+            trans.commit()
+
+        return
 
     # 결과 DataFrame
     buy_df = pd.DataFrame(buy_signals)
@@ -108,8 +110,6 @@ def make_naver_price_summary(**kwargs):
                  'max_price', 'avg_price', 'price_diff', 'price_diff_pct']
     # 결과 확인
     buy_df_with_info = buy_df_with_info[col_names]
-    print(buy_df_with_info)
-    print(buy_df_with_info.info())
 
 
     with engine.connect() as conn:
@@ -137,9 +137,41 @@ def make_naver_price_summary(**kwargs):
     buy_df_with_info.to_sql('summary_buy_timing', con=engine, if_exists='replace', index=True)
 
     # 삽입되었는지 확인, 나중에 삭제
-    confirm_table = pd.read_sql("SELECT * FROM summary_buy_timing", con=engine)
-    print(confirm_table)
-    print(confirm_table.info())
+    # confirm_table = pd.read_sql("SELECT * FROM summary_buy_timing", con=engine)
+    # print(confirm_table)
+
+@task
+def alert_slack_task(**kwargs):
+    engine = create_engine(Variable.get('POSTGRE_NAVER_CONN'))
+
+    df = pd.read_sql("SELECT * FROM summary_buy_timing", con=engine)
+
+    if df.empty:
+        print("⚠️ 알림 대상 상품 없음.")
+        return
+
+    msgs = []
+    for _, row in df.iterrows():
+        max_drop = -(row['max_price'] - row['last_price'])
+        max_drop_pct = -((max_drop / row['max_price']) * 100)
+
+        msg = f"""📢 *[{row['title']}]*  
+🔗 <{row['link']}|상품 보러가기>  
+🛒 키워드: {row['keyword']} / {row['keyword_type']}  
+🕘 분석 기준 시점: {pd.to_datetime(row['dt']).strftime('%Y-%m-%d')}  
+
+💰 최초가: {row['first_price']:,}원 
+📉 최저가: {row['min_price']:,}원 
+📈 최고가: {row['max_price']:,}원
+🧮 평균가: {row['avg_price']:,.2f}원  
+💸 현재가: {row['last_price']:,}원  
+
+🔻 최초가 대비: {row['price_diff']:,}원 ({row['price_diff_pct']:.2f}%)  
+🔻 최고가 대비: {max_drop:,}원 ({max_drop_pct:.2f}%)
+"""
+        msgs.append(msg)
+
+    send_slack_message('\n\n'.join(msgs))
 
 
 with DAG(
@@ -150,4 +182,7 @@ with DAG(
         tags=['naver', 'postgres'],
 ) as dag:
     # DAG 실행 순서 정의
-    make_naver_price_summary()
+    elt = make_naver_price_summary()
+    alram = alert_slack_task()
+
+    elt >> alram

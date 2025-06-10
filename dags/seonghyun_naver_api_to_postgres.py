@@ -105,7 +105,8 @@ def load_via_sqlalchemy(**kwargs):
     df['product_id'] = df['product_id'].apply(str_to_int)
 
     df = df[col_names]
-    print(df.info())
+    logging.info(df.head())
+    logging.info(df.info())
 
 
     engine = create_engine(Variable.get('POSTGRE_NAVER_CONN'))
@@ -165,9 +166,9 @@ def load_via_sqlalchemy(**kwargs):
             raise 
 
     # 삽입확인 나중에 삭제
-    result = pd.read_sql('SELECT * FROM naver_price;', con=engine)
-    print(result)
-    print(result.info())
+    # result = pd.read_sql('SELECT * FROM naver_price;', con=engine)
+    # print(result)
+    # print(result.info())
 
 
 with DAG(
