@@ -6,8 +6,12 @@ from airflow.exceptions import AirflowSkipException
 from airflow.hooks.postgres_hook import PostgresHook
 from psycopg2.extras import execute_values
 from datetime import datetime, timedelta
+import pandas as pd
 import logging
 import requests
+import pytz
+import re
+import os
 
 default_args = {
     'start_date': datetime(2025, 6, 9),
@@ -47,8 +51,6 @@ def extract_from_dw(**context):
 
 
 def preprocess_dm_data(**context):
-    import pandas as pd
-
     hook = PostgresHook(postgres_conn_id='my_postgres_conn_id')
     engine = hook.get_sqlalchemy_engine()
 
@@ -140,8 +142,6 @@ def cluster_and_dedup(**context):
 
 
 def insert_dm_data(**context):
-    import pandas as pd
-    
     hook = PostgresHook(postgres_conn_id='my_postgres_conn_id')
     conn = hook.get_conn()
     cur = conn.cursor()
@@ -257,9 +257,7 @@ def alert_slack_task(**kwargs):
 
 🔻 최초가 대비: {row['price_diff']:,}원 ({row['price_diff_pct']:.2f}%)  
 🔻 최고가 대비: {max_drop:,}원 ({max_drop_pct:.2f}%)
-
-
-
+────────────────────────────────────────────────────────────────────────
 """
         send_slack_message(msg)
 
@@ -294,24 +292,23 @@ with DAG(
         python_callable=preprocess_dm_data,
     )
 
-    t5 = PythonOperator(
+    t4 = PythonOperator(
         task_id='insert_dm_data',
         python_callable=insert_dm_data,
     )
 
-    t6 = PythonOperator(
+    t5 = PythonOperator(
         task_id='send_slack_alert',
         python_callable=alert_slack_task,
     )
 
-    t1 >> t2 >> t3 >> t5 >> t6
+    t1 >> t2 >> t3 >> t4 >> t5
 
 """
+삽입하려면 t4 위치에 삽입하고, 기존 t4, t5를 한단계씩 미뤄야 함
     t4 = PythonOperator(
         task_id='cluster_and_dedup',
         python_callable=cluster_and_dedup,
         provide_context=True
     )
 """
-
-
