@@ -6,11 +6,8 @@ from airflow.exceptions import AirflowSkipException
 from airflow.hooks.postgres_hook import PostgresHook
 from psycopg2.extras import execute_values
 from datetime import datetime, timedelta
-import pandas as pd
 import logging
-import pytz
-import re
-import os
+import requests
 
 default_args = {
     'start_date': datetime(2025, 6, 9),
@@ -50,6 +47,8 @@ def extract_from_dw(**context):
 
 
 def preprocess_dm_data(**context):
+    import pandas as pd
+
     hook = PostgresHook(postgres_conn_id='my_postgres_conn_id')
     engine = hook.get_sqlalchemy_engine()
 
@@ -99,9 +98,50 @@ def preprocess_dm_data(**context):
     df_summary.to_sql('dm_tmp_price_summary', engine, schema='public', if_exists='replace', index=False)
     logging.info(f"✅ 전처리 완료 → dm_tmp_price_summary 테이블 저장 ({len(df_summary)}건)")
 
+"""
+def cluster_and_dedup(**context):
+    import pandas as pd
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.cluster import DBSCAN
+    from sklearn.metrics.pairwise import cosine_similarity
+    from airflow.hooks.postgres_hook import PostgresHook
+    import logging
+
+    hook = PostgresHook(postgres_conn_id='my_postgres_conn_id')
+    engine = hook.get_sqlalchemy_engine()
+
+    df = pd.read_sql("SELECT * FROM public.dm_tmp_price_summary", engine)
+
+    if df.empty:
+        logging.warning("⛔ 클러스터링할 데이터가 없습니다.")
+        return
+
+    tfidf = TfidfVectorizer()
+    tfidf_matrix = tfidf.fit_transform(df['title'])
+    cosine_sim = cosine_similarity(tfidf_matrix)
+    cosine_dist = 1 - cosine_sim
+
+    dbscan = DBSCAN(metric='precomputed', eps=0.2, min_samples=1)
+    df['cluster_id'] = dbscan.fit_predict(cosine_dist)
+
+    # 최소가 기준 중복 제거
+    min_price_per_group = df.groupby('cluster_id')['last_price'].min().reset_index()
+    min_price_per_group.rename(columns={'last_price': 'min_price'}, inplace=True)
+    df = df.merge(min_price_per_group, on='cluster_id')
+    df = df[df['last_price'] == df['min_price']].copy()
+    df = df.drop_duplicates(subset=['cluster_id', 'last_price'], keep='first')
+    df.drop(columns=['min_price'], inplace=True)
+
+    # 저장
+    df.to_sql('dm_tmp_price_summary_deduped', engine, schema='public', if_exists='replace', index=False)
+    logging.info(f"🎯 클러스터링 및 최소가 기준 dedup 완료. 최종 상품 수: {len(df)}")
+    context['ti'].xcom_push(key='deduplicated_data', value=df.to_dict(orient='records'))
+"""
 
 
 def insert_dm_data(**context):
+    import pandas as pd
+    
     hook = PostgresHook(postgres_conn_id='my_postgres_conn_id')
     conn = hook.get_conn()
     cur = conn.cursor()
@@ -172,6 +212,58 @@ def insert_dm_data(**context):
     logging.info(f"✅ DM 테이블(dm_naver_price)에 {len(df)}건 적재 완료")
 
 
+# Slack 메시지 전송 함수
+def send_slack_message(message: str):
+    SLACK_URL = Variable.get("SLACK_WEBHOOK_URL")
+    requests.post(SLACK_URL, json={"text": message})
+
+# 알림 전송 task
+def alert_slack_task(**kwargs):
+    import pandas as pd
+    
+    hook = PostgresHook(postgres_conn_id='my_postgres_conn_id')
+    engine = hook.get_sqlalchemy_engine()
+
+    df = pd.read_sql("SELECT * FROM ndm", con=engine)
+
+    if df.empty:
+        print("⚠️ 알림 대상 상품 없음.")
+        return
+
+    # 조건 필터링: 현재가가 평균가 또는 최고가 대비 20% 이상 하락한 경우
+    filtered_df = df[
+        (df['last_price'] <= df['max_price'] * 0.8) |
+        (df['last_price'] <= df['avg_price'] * 0.8)
+    ]
+
+    if filtered_df.empty:
+        print("⚠️ 조건을 만족하는 상품이 없습니다.")
+        return
+
+    for _, row in filtered_df.iterrows():
+        max_drop = -(row['max_price'] - row['last_price'])
+        max_drop_pct = -((max_drop / row['max_price']) * 100)
+
+        msg = f"""📢 *[{row['title']}]*  
+🔗 <{row['link']}|상품 보러가기>  
+🛒 키워드: {row['keyword']} / {row['keyword_type']}  
+🕘 분석 기준 시점: {pd.to_datetime(row['dt']).strftime('%Y-%m-%d')}  
+
+💰 최초가: {row['first_price']:,}원 ({pd.to_datetime(row['first_price_dt']).strftime('%Y-%m-%d')})  
+📉 최저가: {row['min_price']:,}원 ({pd.to_datetime(row['min_price_dt']).strftime('%Y-%m-%d')})  
+📈 최고가: {row['max_price']:,}원 ({pd.to_datetime(row['max_price_dt']).strftime('%Y-%m-%d')})  
+🧮 평균가: {row['avg_price']:,}원  
+💸 현재가: {row['last_price']:,}원  
+
+🔻 최초가 대비: {row['price_diff']:,}원 ({row['price_diff_pct']:.2f}%)  
+🔻 최고가 대비: {max_drop:,}원 ({max_drop_pct:.2f}%)
+
+
+
+"""
+        send_slack_message(msg)
+
+
 with DAG(
     dag_id='dm_dag',
     default_args=default_args,
@@ -202,9 +294,24 @@ with DAG(
         python_callable=preprocess_dm_data,
     )
 
-    t4 = PythonOperator(
+    t5 = PythonOperator(
         task_id='insert_dm_data',
         python_callable=insert_dm_data,
     )
 
-    t1 >> t2 >> t3 >> t4
+    t6 = PythonOperator(
+        task_id='send_slack_alert',
+        python_callable=alert_slack_task,
+    )
+
+    t1 >> t2 >> t3 >> t5 >> t6
+
+"""
+    t4 = PythonOperator(
+        task_id='cluster_and_dedup',
+        python_callable=cluster_and_dedup,
+        provide_context=True
+    )
+"""
+
+
