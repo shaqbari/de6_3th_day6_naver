@@ -201,11 +201,11 @@ def alert_slack_task(**kwargs):
         msg = f"""📢 *[{row['title']}]*  
 🔗 <{row['link']}|상품 보러가기>  
 🛒 키워드: {row['keyword']} / {row['keyword_type']}  
-🕘 분석 기준 시점: {pd.to_datetime(row['dt']).strftime('%Y-%m-%d')}  
+🕘 분석 기준 시점: {pd.to_datetime(row['dt']).strftime('%Y-%m-%d %H시')}  
 
-💰 최초가: {row['first_price']:,}원 ({pd.to_datetime(row['first_price_dt']).strftime('%Y-%m-%d')})  
-📉 최저가: {row['min_price']:,}원 ({pd.to_datetime(row['min_price_dt']).strftime('%Y-%m-%d')})  
-📈 최고가: {row['max_price']:,}원 ({pd.to_datetime(row['max_price_dt']).strftime('%Y-%m-%d')})  
+💰 최초가: {row['first_price']:,}원 ({pd.to_datetime(row['first_price_dt']).strftime('%Y-%m-%d %H시')})  
+📉 최저가: {row['min_price']:,}원 ({pd.to_datetime(row['min_price_dt']).strftime('%Y-%m-%d %H시')})  
+📈 최고가: {row['max_price']:,}원 ({pd.to_datetime(row['max_price_dt']).strftime('%Y-%m-%d %H시')})  
 🧮 평균가: {row['avg_price']:,}원  
 💸 현재가: {row['last_price']:,}원  
 
