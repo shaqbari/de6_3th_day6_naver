@@ -77,7 +77,7 @@ def preprocess_dm_data(**context):
 
         summary = {
             'productid': productid,
-            'title': last_row['title'],
+            'title': re.sub(r'<[^>]+>', '', last_row['title']),
             'dt': last_row['dt'],
             'link': last_row['link'],
             'keyword': last_row['keyword'],
