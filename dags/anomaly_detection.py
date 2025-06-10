@@ -47,33 +47,29 @@ with DAG(
     #dbt 모델 실행 태스크
     #'summary_shop_keyword' 테이블과 'anomaly' 뷰를 생성하거나 업데이트
     run_dbt_models_task = BashOperator(
-        task_id='run_dbt_models',
-        # dbt 프로젝트 디렉토리로 이동하여 'dbt run' 명령 실행
-        bash_command=f"cd {DBT_PROJECT_DIR} && dbt run --profiles-dir .",
-        env={
-            # dbt가 데이터베이스에 연결하는 데 필요한 환경 변수들을 전달합니다.
-            # 이 값들은 docker-compose.yaml에 정의된 Airflow 환경 변수에서 가져옵니다.
-            "POSTGRES_USER": os.environ.get("AIRFLOW_VAR_NAVER_DB_USER", "naver"),
-            "POSTGRES_PASSWORD": os.environ.get("AIRFLOW_VAR_NAVER_DB_PASSWORD", "naver"),
-            "POSTGRES_HOST": "postgres-naver", 
-            "POSTGRES_DB": "naver",
-            "POSTGRES_PORT": "5432"
-        }
-    )
+    task_id='run_dbt_models',
+    bash_command=f"export PATH=$PATH:/home/airflow/.local/bin && cd {DBT_PROJECT_DIR} && dbt run --profiles-dir .",
+    env={
+        "POSTGRES_USER": os.environ.get("AIRFLOW_VAR_NAVER_DB_USER", "naver"),
+        "POSTGRES_PASSWORD": os.environ.get("AIRFLOW_VAR_NAVER_DB_PASSWORD", "naver"),
+        "POSTGRES_HOST": "postgres-naver", 
+        "POSTGRES_DB": "naver",
+        "POSTGRES_PORT": "5432"
+    }
+)
 
     #dbt 테스트 실행 태스크 
     run_dbt_tests_task = BashOperator(
-        task_id='run_dbt_tests',
-        bash_command=f"cd {DBT_PROJECT_DIR} && dbt test --profiles-dir .",
-        env={
-            # dbt 테스트를 위한 환경 변수 (dbt run과 동일)
-            "POSTGRES_USER": os.environ.get("AIRFLOW_VAR_NAVER_DB_USER", "naver"),
-            "POSTGRES_PASSWORD": os.environ.get("AIRFLOW_VAR_NAVER_DB_PASSWORD", "naver"),
-            "POSTGRES_HOST": "postgres-naver",
-            "POSTGRES_DB": "naver",
-            "POSTGRES_PORT": "5432"
-        }
-    )
+    task_id='run_dbt_tests',
+    bash_command=f"export PATH=$PATH:/home/airflow/.local/bin && cd {DBT_PROJECT_DIR} && dbt test --profiles-dir .",
+    env={
+        "POSTGRES_USER": os.environ.get("AIRFLOW_VAR_NAVER_DB_USER", "naver"),
+        "POSTGRES_PASSWORD": os.environ.get("AIRFLOW_VAR_NAVER_DB_PASSWORD", "naver"),
+        "POSTGRES_HOST": "postgres-naver",
+        "POSTGRES_DB": "naver",
+        "POSTGRES_PORT": "5432"
+    }
+)
 
     # 태스크 간 의존성 설정
     # dbt 모델 실행 -> dbt 테스트 실행 

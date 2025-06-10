@@ -267,8 +267,8 @@ services:
           echo "    https://airflow.apache.org/docs/apache-airflow/stable/howto/docker-compose/index.html#before-you-begin"
           echo
         fi
-        mkdir -p /sources/logs /sources/dags /sources/plugins /sources/data /sources/naver_project # naver_project 추가 (오류 수정)
-        chown -R "${AIRFLOW_UID}:0" /sources/{logs,dags,plugins,data,naver_project} # naver_project 추가
+        mkdir -p /sources/logs /sources/dags /sources/plugins /sources/data /sources/naver_project
+
         exec /entrypoint airflow version
     # yamllint enable rule:line-length
     environment:
