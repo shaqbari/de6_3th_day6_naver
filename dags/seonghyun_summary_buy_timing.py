@@ -77,7 +77,7 @@ def make_naver_price_summary(**kwargs):
         price_diff = (last_price - first_price)
         price_diff_pct = price_diff / first_price * 100
 
-        # 조건: 현재가가 MA3보다 낮고, 최저가에 근접 (5% 이내), price_diff_pct -10이하
+        # 조건: 현재가가 MA12보다 낮고, 최저가에 근접 (5% 이내), price_diff_pct -10이하
         if not pd.isna(
                 current_ma12) and last_price < current_ma12 and last_price <= min_price * 1.05 and price_diff_pct <= -10:
             buy_signals.append({

@@ -8,6 +8,7 @@ from psycopg2.extras import execute_values
 from datetime import datetime, timedelta
 import pandas as pd
 import logging
+import requests
 import pytz
 import re
 import os
@@ -100,7 +101,6 @@ def preprocess_dm_data(**context):
     logging.info(f"✅ 전처리 완료 → dm_tmp_price_summary 테이블 저장 ({len(df_summary)}건)")
 
 
-
 def insert_dm_data(**context):
     hook = PostgresHook(postgres_conn_id='my_postgres_conn_id')
     conn = hook.get_conn()
@@ -171,6 +171,50 @@ def insert_dm_data(**context):
     conn.close()
     logging.info(f"✅ DM 테이블(dm_naver_price)에 {len(df)}건 적재 완료")
 
+def send_slack_message(message: str):
+    SLACK_URL = Variable.get("SLACK_WEBHOOK_URL")
+    requests.post(SLACK_URL, json={"text": message})
+
+def alert_slack_task(**kwargs):
+    hook = PostgresHook(postgres_conn_id='my_postgres_conn_id')
+    engine = hook.get_sqlalchemy_engine()
+
+    df = pd.read_sql("SELECT * FROM ndm", con=engine)
+
+    if df.empty:
+        print("⚠️ 알림 대상 상품 없음.")
+        return
+
+    filtered_df = df[
+        (df['last_price'] <= df['max_price'] * 0.8) |
+        (df['last_price'] <= df['avg_price'] * 0.8)
+    ]
+
+    if filtered_df.empty:
+        print("⚠️ 조건을 만족하는 상품이 없습니다.")
+        return
+
+    for _, row in filtered_df.iterrows():
+        max_drop = -(row['max_price'] - row['last_price'])
+        max_drop_pct = -((max_drop / row['max_price']) * 100)
+
+        msg = f"""📢 *[{row['title']}]*  
+🔗 <{row['link']}|상품 보러가기>  
+🛒 키워드: {row['keyword']} / {row['keyword_type']}  
+🕘 분석 기준 시점: {pd.to_datetime(row['dt']).strftime('%Y-%m-%d')}  
+
+💰 최초가: {row['first_price']:,}원 ({pd.to_datetime(row['first_price_dt']).strftime('%Y-%m-%d')})  
+📉 최저가: {row['min_price']:,}원 ({pd.to_datetime(row['min_price_dt']).strftime('%Y-%m-%d')})  
+📈 최고가: {row['max_price']:,}원 ({pd.to_datetime(row['max_price_dt']).strftime('%Y-%m-%d')})  
+🧮 평균가: {row['avg_price']:,}원  
+💸 현재가: {row['last_price']:,}원  
+
+🔻 최초가 대비: {row['price_diff']:,}원 ({row['price_diff_pct']:.2f}%)  
+🔻 최고가 대비: {max_drop:,}원 ({max_drop_pct:.2f}%)
+────────────────────────────────────────────────────────────────────────
+"""
+        send_slack_message(msg)
+=======
 
 with DAG(
     dag_id='dm_dag',
@@ -207,4 +251,10 @@ with DAG(
         python_callable=insert_dm_data,
     )
 
-    t1 >> t2 >> t3 >> t4
+
+    t5 = PythonOperator(
+        task_id='send_slack_alert',
+        python_callable=alert_slack_task,
+    )
+
+    t1 >> t2 >> t3 >> t4 >> t5
