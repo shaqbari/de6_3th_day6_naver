@@ -23,24 +23,24 @@
 # This configuration supports basic configuration using environment variables or an .env file
 # The following variables are supported:
 #
-# AIRFLOW_IMAGE_NAME           - Docker image name used to run Airflow.
-#                                Default: apache/airflow:2.9.3
-# AIRFLOW_UID                  - User ID in Airflow containers
-#                                Default: 50000
-# AIRFLOW_PROJ_DIR             - Base path to which all the files will be volumed.
-#                                Default: .
+# AIRFLOW_IMAGE_NAME             - Docker image name used to run Airflow.
+#                                   Default: apache/airflow:2.9.3
+# AIRFLOW_UID                    - User ID in Airflow containers
+#                                   Default: 50000
+# AIRFLOW_PROJ_DIR               - Base path to which all the files will be volumed.
+#                                   Default: .
 # Those configurations are useful mostly in case of standalone testing/running Airflow in test/try-out mode
 #
-# _AIRFLOW_WWW_USER_USERNAME   - Username for the administrator account (if requested).
-#                                Default: airflow
-# _AIRFLOW_WWW_USER_PASSWORD   - Password for the administrator account (if requested).
-#                                Default: airflow
+# _AIRFLOW_WWW_USER_USERNAME     - Username for the administrator account (if requested).
+#                                   Default: airflow
+# _AIRFLOW_WWW_USER_PASSWORD     - Password for the administrator account (if requested).
+#                                   Default: airflow
 # _PIP_ADDITIONAL_REQUIREMENTS - Additional PIP requirements to add when starting all containers.
-#                                Use this option ONLY for quick checks. Installing requirements at container
-#                                startup is done EVERY TIME the service is started.
-#                                A better way is to build a custom image or extend the official image
-#                                as described in https://airflow.apache.org/docs/docker-stack/build.html.
-#                                Default: ''
+#                                   Use this option ONLY for quick checks. Installing requirements at container
+#                                   startup is done EVERY TIME the service is started.
+#                                   A better way is to build a custom image or extend the official image
+#                                   as described in https://airflow.apache.org/docs/docker-stack/build.html.
+#                                   Default: ''
 #
 # Feel free to modify this file to suit your needs.
 ---
@@ -70,7 +70,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
     # WARNING: Use _PIP_ADDITIONAL_REQUIREMENTS option ONLY for a quick checks
     # for other purpose (development, test and especially production usage) build/extend Airflow image.
-    _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:- yfinance pandas numpy oauth2client gspread requests pytz}
+    _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:- dbt-postgres yfinance pandas numpy oauth2client gspread requests pytz} # dbt-postgres 추가
     # The following line can be used to set a custom config file, stored in the local config folder
     # If you want to use it, outcomment it and replace airflow.cfg with the name of your config file
     # AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
@@ -80,6 +80,7 @@ x-airflow-common: &airflow-common
     - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
     - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
     - ${AIRFLOW_PROJ_DIR:-.}/data:/opt/airflow/data
+    - ${AIRFLOW_PROJ_DIR:-.}/naver_project:/opt/airflow/naver_project # dbt 프로젝트 볼륨 마운트
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on: &airflow-common-depends-on
     redis:
@@ -114,7 +115,7 @@ services:
     volumes:
       - postgres-naver-db-volume:/var/lib/postgresql/data
     ports:
-      - "5433:5432" # <-- 이 줄 추가
+      - "5433:5432"
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "naver"]
       interval: 10s
@@ -133,7 +134,6 @@ services:
       interval: 10s
       timeout: 30s
       retries: 50
-      start_period: 30s
     restart: always
 
   airflow-webserver:
@@ -170,7 +170,7 @@ services:
       start_period: 30s
     restart: always
     depends_on:
-      <<: *airflow-common-depends-on
+      <<: *airflow-common-depends_on
       airflow-init:
         condition: service_completed_successfully
 
@@ -194,7 +194,7 @@ services:
       # See https://airflow.apache.org/docs/docker-stack/entrypoint.html#signal-propagation
     restart: always
     depends_on:
-      <<: *airflow-common-depends-on
+      <<: *airflow-common-depends_on
       airflow-init:
         condition: service_completed_successfully
 
@@ -213,7 +213,7 @@ services:
       start_period: 30s
     restart: always
     depends_on:
-      <<: *airflow-common-depends-on
+      <<: *airflow-common-depends_on
       airflow-init:
         condition: service_completed_successfully
 
@@ -263,11 +263,11 @@ services:
           echo
           echo -e "\033[1;33mWARNING!!!: You have not enough resources to run Airflow (see above)!\e[0m"
           echo "Please follow the instructions to increase amount of resources available:"
-          echo "   https://airflow.apache.org/docs/apache-airflow/stable/howto/docker-compose/index.html#before-you-begin"
+          echo "    https://airflow.apache.org/docs/apache-airflow/stable/howto/docker-compose/index.html#before-you-begin"
           echo
         fi
-        mkdir -p /sources/logs /sources/dags /sources/plugins/sources/data
-        chown -R "${AIRFLOW_UID}:0" /sources/{logs,dags,plugins,data}
+        mkdir -p /sources/logs /sources/dags /sources/plugins/sources/data /sources/naver_project # naver_project 추가
+        chown -R "${AIRFLOW_UID}:0" /sources/{logs,dags,plugins,data,naver_project} # naver_project 추가
         exec /entrypoint airflow version
     # yamllint enable rule:line-length
     environment:
@@ -312,9 +312,27 @@ services:
       start_period: 30s
     restart: always
     depends_on:
-      <<: *airflow-common-depends-on
+      <<: *airflow-common-depends_on
       airflow-init:
         condition: service_completed_successfully
+
+  dbt: # 새로 추가되는 dbt 서비스
+    image: ghcr.io/dbt-labs/dbt-postgres:1.9.0
+    container_name: dbt_cli
+    volumes:
+      - ${AIRFLOW_PROJ_DIR:-.}/naver_project:/usr/app/naver_project # 호스트의 naver_project를 컨테이너 내부의 /usr/app/naver_project에 마운트
+    working_dir: /usr/app/naver_project # dbt 명령 실행 시 이 디렉토리에서 실행
+    environment:
+      # dbt가 PostgreSQL에 연결할 수 있도록 환경 변수 설정 (profiles.yml에 정의된 값과 일치해야 함)
+      POSTGRES_USER: naver
+      POSTGRES_PASSWORD: naver
+      POSTGRES_HOST: postgres-naver # postgres-naver 서비스의 이름을 사용
+      POSTGRES_DB: naver
+      POSTGRES_PORT: 5432
+    depends_on:
+      - postgres-naver # dbt가 postgres-naver 이후 시작되게 함
+    networks:
+      - default # Airflow 서비스와 동일한 네트워크에 있어야 통신 가능
 
 volumes:
   postgres-db-volume:

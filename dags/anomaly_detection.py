@@ -61,7 +61,7 @@ with DAG(
         }
     )
 
-    # 3. dbt 테스트 실행 태스크 
+    #dbt 테스트 실행 태스크 
     run_dbt_tests_task = BashOperator(
         task_id='run_dbt_tests',
         bash_command=f"cd {DBT_PROJECT_DIR} && dbt test --profiles-dir .",
@@ -76,5 +76,5 @@ with DAG(
     )
 
     # 태스크 간 의존성 설정
-    # 데이터 추출 -> dbt 모델 실행 -> dbt 테스트 실행 
-    extract_task >> run_dbt_models_task >> run_dbt_tests_task
+    # dbt 모델 실행 -> dbt 테스트 실행 
+    run_dbt_models_task >> run_dbt_tests_task
