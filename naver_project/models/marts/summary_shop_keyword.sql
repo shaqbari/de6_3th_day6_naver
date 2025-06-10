@@ -1,27 +1,13 @@
-
-/*
-    Welcome to your first dbt model!
-    Did you know that you can also configure models directly within SQL files?
-    This will override configurations stated in dbt_project.yml
-
-    Try changing "table" to "view" below
-*/
-
-{{ config(materialized='table') }}
-
-with source_data as (
-
-    select 1 as id
-    union all
-    select null as id
-
-)
-
-select *
-from source_data
-
-/*
-    Uncomment the line below to remove records with null `id` values
-*/
-
--- where id is not null
+SELECT
+    TO_CHAR(dt, 'YYYY-MM-DD HH24:MI:SS') AS dt, -- id는 시간 단위로 변환
+    keyword,
+    AVG(lprice)::bigint AS avg_price,
+    MIN(lprice)::bigint AS min_price,
+    MAX(lprice)::bigint AS max_price
+FROM 
+    {{ source('public', 'naver_shopping') }} -- dbt source 사용 (public 스키마의 naver_shopping 테이블)
+WHERE 
+    keyword IS NOT NULL
+GROUP BY 
+    TO_CHAR(dt, 'YYYY-MM-DD HH24:MI:SS'), -- 시간 단위로 그룹화
+    keyword

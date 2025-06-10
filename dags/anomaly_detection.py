@@ -3,69 +3,78 @@ import pandas as pd
 from airflow import DAG
 from airflow.decorators import task
 from airflow.hooks.postgres_hook import PostgresHook
-from sqlalchemy.sql import text
 import os
+from airflow.operators.bash import BashOperator
 
 default_args = {
     'owner': 'airflow',
-    'start_date': datetime(2025, 6, 5),
-    'retries': 1,
-    'retry_delay': timedelta(minutes=2),
+    'start_date': datetime(2025, 6, 5), # DAG 시작 날짜
+    'retries': 1, # 실패 시 재시도 횟수
+    'retry_delay': timedelta(minutes=2), # 재시도 간격
 }
 
-BASE_SQL_PATH = r'D:\docker\de6_3th_day6_naver\naver_project\models\marts'
-
-def load_sql(filename: str) -> str:
-    with open(os.path.join(BASE_SQL_PATH, filename), 'r', encoding='utf-8') as file:
-        return file.read()
+# dbt 프로젝트의 루트 경로 naver_project
+DBT_PROJECT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'naver_project')
 
 @task
-def detect_and_save_summary():
+def extract_data_to_staging():
+    """
+    네이버 쇼핑 원본 데이터를 추출하여 데이터베이스에 로드합니다.
+    이 데이터는 dbt 모델의 소스로 활용됩니다.
+    """
     hook = PostgresHook(postgres_conn_id='postgres_naver_conn')
     engine = hook.get_sqlalchemy_engine()
 
-    df = pd.read_sql("SELECT * FROM naver_shopping", con=engine)
-    df['dt'] = pd.to_datetime(df['dt'])
-    df['hour'] = df['dt'].dt.floor('h')
-    df_filtered = df[df['keyword'].notnull()]
+    try:
+        # naver_shopping 테이블에서 모든 데이터를 읽음
+        df = pd.read_sql("SELECT * FROM naver_shopping", con=engine)
 
-    result = df_filtered.groupby(['hour', 'keyword'])['lprice'].agg(
-        avg_price='mean',
-        min_price='min',
-        max_price='max'
-    ).reset_index()
+        pass
 
-    result['avg_price'] = result['avg_price'].astype(int)
-    result['id'] = result['hour'].astype(str)
-    result = result[['id', 'keyword', 'avg_price', 'min_price', 'max_price']]
+    finally:
 
-    with engine.begin() as conn:
-        # 테이블 생성
-        table_sql = load_sql('summary_shop_keyword.sql')
-        conn.execute(text(table_sql))
-
-        # 데이터 삽입
-        if not result.empty:
-            keys_to_delete = result[['id', 'keyword']].drop_duplicates()
-            tuple_strs = ", ".join(
-                f"('{row['id']}', '{row['keyword']}')" for _, row in keys_to_delete.iterrows()
-            )
-            delete_sql = f"""
-                DELETE FROM summary_shop_keyword
-                WHERE (id, keyword) IN ({tuple_strs})
-            """
-            conn.execute(text(delete_sql))
-            result.to_sql('summary_shop_keyword', con=conn, if_exists='append', index=False)
-
-        # 뷰 생성
-        view_sql = load_sql('anomaly.sql')
-        conn.execute(text(view_sql))
+        pass
 
 with DAG(
-    dag_id='anomaly_detection',
+    dag_id='anomaly_detection', # DAG ID
     default_args=default_args,
-    schedule_interval=None,
-    catchup=False,
-    tags=['naver', 'anomaly'],
+    schedule_interval=None, 
+    catchup=False, # 과거 누락된 DAG 실행 안 함
+    tags=['naver', 'anomaly', 'dbt'], # DAG 태그
 ) as dag:
-    detect_and_save_summary()
+
+
+    #dbt 모델 실행 태스크
+    #'summary_shop_keyword' 테이블과 'anomaly' 뷰를 생성하거나 업데이트
+    run_dbt_models_task = BashOperator(
+        task_id='run_dbt_models',
+        # dbt 프로젝트 디렉토리로 이동하여 'dbt run' 명령 실행
+        bash_command=f"cd {DBT_PROJECT_DIR} && dbt run --profiles-dir .",
+        env={
+            # dbt가 데이터베이스에 연결하는 데 필요한 환경 변수들을 전달합니다.
+            # 이 값들은 docker-compose.yaml에 정의된 Airflow 환경 변수에서 가져옵니다.
+            "POSTGRES_USER": os.environ.get("AIRFLOW_VAR_NAVER_DB_USER", "naver"),
+            "POSTGRES_PASSWORD": os.environ.get("AIRFLOW_VAR_NAVER_DB_PASSWORD", "naver"),
+            "POSTGRES_HOST": "postgres-naver", 
+            "POSTGRES_DB": "naver",
+            "POSTGRES_PORT": "5432"
+        }
+    )
+
+    # 3. dbt 테스트 실행 태스크 
+    run_dbt_tests_task = BashOperator(
+        task_id='run_dbt_tests',
+        bash_command=f"cd {DBT_PROJECT_DIR} && dbt test --profiles-dir .",
+        env={
+            # dbt 테스트를 위한 환경 변수 (dbt run과 동일)
+            "POSTGRES_USER": os.environ.get("AIRFLOW_VAR_NAVER_DB_USER", "naver"),
+            "POSTGRES_PASSWORD": os.environ.get("AIRFLOW_VAR_NAVER_DB_PASSWORD", "naver"),
+            "POSTGRES_HOST": "postgres-naver",
+            "POSTGRES_DB": "naver",
+            "POSTGRES_PORT": "5432"
+        }
+    )
+
+    # 태스크 간 의존성 설정
+    # 데이터 추출 -> dbt 모델 실행 -> dbt 테스트 실행 
+    extract_task >> run_dbt_models_task >> run_dbt_tests_task

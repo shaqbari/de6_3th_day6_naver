@@ -1,21 +1,40 @@
-
 version: 2
 
 models:
-  - name: my_first_dbt_model
-    description: "A starter dbt model"
+  - name: summary_shop_keyword # summary_shop_keyword 테이블에 대한 정의
+    description: "네이버 쇼핑 키워드별 시간당 요약 가격 정보를 담는 테이블. 이상치 감지 및 분석에 활용됩니다."
     columns:
       - name: id
-        description: "The primary key for this table"
+        description: "시간 단위의 고유 ID (YYYY-MM-DD HH24:MI:SS 형식)"
         data_tests:
-          - unique
-          - not_null
+          - not_null # 이 컬럼은 NULL이 아니어야 함
+          - unique # 이 컬럼은 고유해야 함 (keyword와 함께 복합 기본 키 역할)
+      - name: keyword
+        description: "쇼핑 키워드"
+        data_tests:
+          - not_null # 이 컬럼은 NULL이 아니어야 함
+      - name: avg_price
+        description: "해당 시간과 키워드에 대한 평균 가격"
+      - name: min_price
+        description: "해당 시간과 키워드에 대한 최소 가격"
+      - name: max_price
+        description: "해당 시간과 키워드에 대한 최대 가격"
 
-  - name: my_second_dbt_model
-    description: "A starter dbt model"
+  - name: anomaly # anomaly 뷰에 대한 정의
+    description: "summary_shop_keyword 테이블을 기반으로 키워드별 가격 이상치를 감지하는 뷰"
     columns:
       - name: id
-        description: "The primary key for this table"
+        description: "시간 단위의 고유 ID (summary_shop_keyword의 id와 동일)"
+      - name: keyword
+        description: "쇼핑 키워드 (summary_shop_keyword의 keyword와 동일)"
+      - name: avg_price
+        description: "현재 시간의 평균 가격"
+      - name: min_price
+        description: "현재 시간의 최소 가격"
+      - name: max_price
+        description: "현재 시간의 최대 가격"
+      - name: anomal
+        description: "이전 시간 대비 현재 시간의 평균 가격 변동률이 5% 이상일 경우 1, 그렇지 않으면 0. (0: 정상, 1: 이상치)"
         data_tests:
-          - unique
-          - not_null
+          - accepted_values: # anomal 컬럼의 값이 0 또는 1만 허용
+              values: [0, 1]
