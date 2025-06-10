@@ -214,7 +214,6 @@ def alert_slack_task(**kwargs):
 ────────────────────────────────────────────────────────────────────────
 """
         send_slack_message(msg)
-=======
 
 with DAG(
     dag_id='dm_dag',
