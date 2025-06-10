@@ -77,7 +77,7 @@ def preprocess_dm_data(**context):
 
         summary = {
             'productid': productid,
-            'title': last_row['title'],
+            'title': re.sub(r'<[^>]+>', '', last_row['title']),
             'dt': last_row['dt'],
             'link': last_row['link'],
             'keyword': last_row['keyword'],
@@ -196,7 +196,7 @@ def alert_slack_task(**kwargs):
 
     for _, row in filtered_df.iterrows():
         max_drop = -(row['max_price'] - row['last_price'])
-        max_drop_pct = -((max_drop / row['max_price']) * 100)
+        max_drop_pct = (max_drop / row['max_price']) * 100
 
         msg = f"""📢 *[{row['title']}]*  
 🔗 <{row['link']}|상품 보러가기>  
