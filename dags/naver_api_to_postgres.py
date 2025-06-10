@@ -82,7 +82,9 @@ def load_via_sqlalchemy(**kwargs):
         'productType': 'product_type'
     }, inplace=True)
 
-    store_dt = kwargs['logical_date'].naive()
+    utc_time = kwargs['logical_date']  # tz-aware UTC datetime
+    kst = timezone('Asia/Seoul')
+    store_dt = utc_time.astimezone(kst).replace(tzinfo=None)
     df['dt'] = store_dt
     df['id'] = df['product_id'].astype(str) + '_' + store_dt.strftime('%Y-%m-%d_%H')
 

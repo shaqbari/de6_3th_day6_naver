@@ -49,10 +49,22 @@ def detect_and_save_summary():
         # 2) 뷰 생성 (기존에 존재하면 교체)
         conn.execute("""
             CREATE OR REPLACE VIEW anomaly AS
-            SELECT id, keyword, avg_price, min_price, max_price
-            FROM summary_shop_keyword;
+            SELECT 
+                curr.id,
+                curr.keyword,
+                curr.avg_price,
+                curr.min_price,
+                curr.max_price,
+                CASE 
+                    WHEN prev.avg_price IS NULL THEN 0
+                    WHEN ABS(curr.avg_price - prev.avg_price) / NULLIF(prev.avg_price, 0) >= 0.1 THEN 1
+                    ELSE 0
+                END AS anomal
+            FROM summary_shop_keyword curr
+            LEFT JOIN summary_shop_keyword prev
+                ON curr.keyword = prev.keyword
+                AND prev.id = TO_CHAR(TO_TIMESTAMP(curr.id, 'YYYY-MM-DD HH24:MI:SS') - INTERVAL '1 hour', 'YYYY-MM-DD HH24:MI:SS')
         """)
-
         if not result.empty:
             # 3) 중복 삭제 후 삽입
             keys_to_delete = result[['id', 'keyword']].drop_duplicates()
