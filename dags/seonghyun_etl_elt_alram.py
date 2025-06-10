@@ -8,7 +8,6 @@ import requests
 import pandas as pd
 import json
 import logging
-import time
 
 default_args = {
     'owner': 'airflow',
@@ -17,13 +16,171 @@ default_args = {
     'retry_delay': timedelta(minutes=3)
 }
 
+# Naver API 정보
+NAVER_CLIENT_ID = Variable.get('NAVER_API_CLIENT_ID')
+NAVER_CLIENT_SECRET = Variable.get('NAVER_API_CLIENT_SECRET')
+
+# 키워드 정보
+NAVER_KEYWORD_JSON =Variable.get('NAVER_KEYWORD_JSON')
+
+col_names = [
+    'id',
+    'dt',
+    'keyword_type',
+    'keyword',
+    'brand',
+    'category1',
+    'category2',
+    'category3',
+    'category4',
+    'hprice',
+    'image',
+    'link',
+    'lprice',
+    'maker',
+    'mall_name',
+    'product_id',
+    'product_type',
+    'title'
+]
+
+
+def naver_search_shopping(query, display=100):
+    url = "https://openapi.naver.com/v1/search/shop.json"
+
+    headers = {
+        "X-Naver-Client-Id": NAVER_CLIENT_ID,
+        "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
+    }
+
+    params = {
+        'query': query,
+        'display': display,
+        'sort': 'sim',
+        'exclude': 'used:cbshop:rental'  # 중고, 해외구매, 렌탈 제외
+
+    }
+
+    response = requests.get(url, headers=headers, params=params)
+
+    if response.status_code == 200:
+        result = response.json()
+        print(f"조회 성공:{query}")
+        return result
+    else:
+        print(f"요청 실패: {response.status_code}")
+        print(response.text)
+        raise
+
+
+def str_to_int(s: str):
+    s = s.strip()
+
+    return int(s) if s else 0
+
+
 def send_slack_message(message: str):
     SLACK_URL = Variable.get("SLACK_WEBHOOK_URL")
     requests.post(SLACK_URL, json={"text": message})
 
 
+
 @task
-def make_naver_price_summary(**kwargs):
+def load_to_postgre(**kwargs):
+    keyword_dict = json.loads(NAVER_KEYWORD_JSON)
+
+
+    dfs = []
+    for keyword_type, keywords in keyword_dict.items():
+        for keyword in keywords:
+            df_keword = pd.DataFrame(naver_search_shopping(keyword)['items'])
+            df_keword['keyword_type'] = keyword_type
+            df_keword['keyword'] = keyword
+
+            dfs.append(df_keword)
+
+    df = pd.concat(dfs)
+    df.rename(columns={'mallName': 'mall_name', 'productId': 'product_id', 'productType': 'product_type'},
+              inplace=True)
+
+    store_dt = kwargs['logical_date'].naive()
+    df['dt'] = store_dt
+    df['id'] = df['product_id'] + '_' + store_dt.strftime('%Y-%m-%d_%H')
+
+    df['hprice'] = df['hprice'].apply(str_to_int)
+    df['lprice'] = df['lprice'].apply(str_to_int)
+    df['product_id'] = df['product_id'].apply(str_to_int)
+
+    df = df[col_names]
+    logging.info(df.head())
+    logging.info(df.info())
+
+
+    engine = create_engine(Variable.get('POSTGRE_NAVER_CONN'))
+    with engine.connect() as conn:
+        trans = conn.begin()  # 트랜잭션 시작
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS naver_price(
+                id text PRIMARY KEY,
+                dt timestamp,
+                keyword_type text,
+                keyword text,
+                brand text,
+                category1 text,
+                category2 text,
+                category3 text,
+                category4 text,
+                hprice bigint,
+                image text,
+                link text,
+                lprice bigint,
+                maker text,
+                mall_name text,
+                product_id bigint,
+                product_type text,
+                title text
+            )
+        """)
+        trans.commit()
+
+    # 1. 임시 테이블에 적재
+    df.to_sql('naver_price_temp', con=engine, if_exists='replace', index=False)  # 우선 public schema이용
+
+    # 중복되는 값 제거하고 insert
+    with engine.connect() as conn:
+        trans = conn.begin()  # 트랜잭션 시작
+
+        try:
+            conn.execute("""
+                DELETE FROM naver_price
+                USING naver_price_temp
+                WHERE naver_price.id = naver_price_temp.id;
+            """)
+
+            conn.execute("""
+                INSERT INTO naver_price
+                SELECT * FROM naver_price_temp;
+            """)
+
+            conn.execute("""
+                DROP TABLE IF EXISTS naver_price_temp;
+            """)
+            trans.commit()  # 커밋
+
+        except Exception as e:
+            trans.rollback()  # 실패 시 롤백
+            logging.exception(e)
+            raise
+
+    # 삽입확인 나중에 삭제
+    # result = pd.read_sql('SELECT * FROM naver_price;', con=engine)
+    # print(result)
+    # print(result.info())
+
+
+
+@task
+def make_summary_buy_timing(**kwargs):
     engine = create_engine(Variable.get('POSTGRE_NAVER_CONN'))
     df_naver_price = pd.read_sql("select * from naver_price", con=engine)
 
@@ -173,16 +330,16 @@ def alert_slack_task(**kwargs):
 
     send_slack_message('\n\n'.join(msgs))
 
-
 with DAG(
-        dag_id='seonghyun_summary_buy_timing',
+        dag_id='seonghyun_etl_elt_alram',
         default_args=default_args,
-        schedule_interval='5 * * * *',  # hourly
+        schedule_interval='0 * * * *', #hourly
         catchup=False,
         tags=['naver', 'postgres'],
 ) as dag:
     # DAG 실행 순서 정의
-    elt = make_naver_price_summary()
+    etl = load_to_postgre()
+    elt = make_summary_buy_timing()
     alram = alert_slack_task()
 
-    elt >> alram
+    etl >> elt >> alram
