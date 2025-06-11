@@ -1,14 +1,12 @@
+# 가벼운 라이브러리만 남기고, 무거운 라이브러리는 사용되는 함수 내에서 호출
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.models import Variable
 from airflow.hooks.postgres_hook import PostgresHook
 from datetime import datetime, timedelta
 from pytz import timezone
-import pandas as pd
-import requests
 import json
 import logging
-import time
 
 KST = timezone('Asia/Seoul')
 
@@ -29,6 +27,9 @@ def load_keywords(**context):
 
 
 def collect_data(**context):
+    import pandas as pd
+    import time
+
     keyword_map = context['ti'].xcom_pull(key='keyword_map', task_ids='load_keywords')
     keywords = list(keyword_map.keys())
     all_items = []
@@ -66,6 +67,8 @@ def collect_data(**context):
 
 
 def insert_to_postgres(**context):
+    import pandas as pd
+
     df_json = context['ti'].xcom_pull(key='collected_df', task_ids='collect_data')
     df = pd.read_json(df_json)
 
@@ -159,6 +162,8 @@ def insert_to_postgres(**context):
 
 
 def naver_search_shopping(query, display=100):
+    import requests
+    
     url = "https://openapi.naver.com/v1/search/shop.json"
     headers = {
         "X-Naver-Client-Id": Variable.get("NAVER_CLIENT_ID"),
