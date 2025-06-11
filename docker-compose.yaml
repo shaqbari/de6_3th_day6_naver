@@ -113,7 +113,7 @@ services:
       POSTGRES_PASSWORD: naver
       POSTGRES_DB: naver
     volumes:
-      - postgres-db-volume:/var/lib/postgresql-naver/data
+      - postgres-naver-db-volume:/var/lib/postgresql/data
     ports:
       - "5433:5432"   # <-- 이 줄 추가
     healthcheck:
@@ -308,3 +308,4 @@ services:
 
 volumes:
   postgres-db-volume:
+  postgres-naver-db-volume:
