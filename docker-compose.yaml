@@ -56,7 +56,7 @@ x-airflow-common:
     AIRFLOW_VAR_DATA_DIR: /opt/airflow/data 
     AIRFLOW_VAR_NAVER_API_CLIENT_ID: ${NAVER_API_CLIENT_ID}
     AIRFLOW_VAR_NAVER_API_CLIENT_SECRET: ${NAVER_API_CLIENT_SECRET}
-    AIRFLOW_VAR_POSTGRE_NAVER_CONN: postgresql+psycopg2://naver:naver@postgres-naver/naver
+    AIRFLOW_VAR_POSTGRE_NAVER_CONN: postgresql+psycopg2://${DB_USER}:${DB_PASSWORD}@postgres-naver/${DB_NAME}
     AIRFLOW__CORE__EXECUTOR: CeleryExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
     AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
@@ -109,13 +109,13 @@ services:
   postgres-naver:
     image: postgres:13
     environment:
-      POSTGRES_USER: naver
-      POSTGRES_PASSWORD: naver
-      POSTGRES_DB: naver
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
     volumes:
       - postgres-naver-db-volume:/var/lib/postgresql/data
     ports:
-      - "5433:5432"   # <-- 이 줄 추가
+      - "${DB_PORT}:5432"   # <-- 이 줄 추가
     healthcheck:
       test: [ "CMD", "pg_isready", "-U", "naver" ]
       interval: 10s
