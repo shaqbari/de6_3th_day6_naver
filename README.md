@@ -18,6 +18,8 @@ from airflow.models import Variable
 
 client_id = Variable.get('NAVER_API_CLIENT_ID')
 client_secret = Variable.get('NAVER_API_CLIENT_SECRET')
+db_conn_url = Variable.get('POSTGRE_NAVER_CONN')
+
 ```
 
 
