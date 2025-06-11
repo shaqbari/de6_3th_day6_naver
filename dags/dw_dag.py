@@ -3,7 +3,6 @@ from airflow.operators.python import PythonOperator
 from airflow.sensors.external_task import ExternalTaskSensor
 from airflow.hooks.postgres_hook import PostgresHook
 from datetime import datetime, timedelta
-import pandas as pd
 import logging
 
 default_args = {
@@ -13,6 +12,8 @@ default_args = {
 }
 
 def transfer_to_dw(**context):
+    import pandas as pd
+
     hook = PostgresHook(postgres_conn_id='my_postgres_conn_id')
     conn = hook.get_conn()
     cur = conn.cursor()
@@ -47,7 +48,7 @@ def transfer_to_dw(**context):
         logging.info("✅ DW 테이블 생성 완료 또는 이미 존재")
 
         # ✅ ST 테이블에서 데이터 조회
-        cur.execute("SELECT * FROM public.naver_price;")
+        cur.execute("SELECT * FROM public.nst;")
         rows = cur.fetchall()
         colnames = [desc[0] for desc in cur.description]
         df_st = pd.DataFrame(rows, columns=colnames)
@@ -92,6 +93,9 @@ def transfer_to_dw(**context):
             inserted_count += 1
 
         conn.commit()
+
+        # ✅ 시퀀스 리셋
+        cur.execute("SELECT setval('ndw_id_seq', (SELECT MAX(id) FROM public.ndw));")
 
         cur.execute("SELECT COUNT(*) FROM public.ndw;")
         total_count = cur.fetchone()[0]
